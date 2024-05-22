@@ -63,6 +63,7 @@ typedef enum {
   ML_TRAIN_LAYER_TYPE_POSITIONAL_ENCODING =
     28, /**< Positional Encoding Layer type (Since 7.0) */
   ML_TRAIN_LAYER_TYPE_IDENTITY = 29, /**< Identity Layer type (Since 8.0) */
+   ML_TRAIN_LAYER_TYPE_SWIGLU = 30,
   ML_TRAIN_LAYER_TYPE_PREPROCESS_FLIP =
     300, /**< Preprocess flip Layer (Since 6.5) */
   ML_TRAIN_LAYER_TYPE_PREPROCESS_TRANSLATE =
@@ -75,7 +76,9 @@ typedef enum {
                                        Sigmoid Loss Layer type (Since 6.5) */
   ML_TRAIN_LAYER_TYPE_LOSS_CROSS_ENTROPY_SOFTMAX = 502, /**< Cross Entropy with
                                        Softmax Loss Layer type (Since 6.5) */
-  ML_TRAIN_LAYER_TYPE_UNKNOWN = 999                     /**< Unknown Layer */
+  ML_TRAIN_LAYER_TYPE_UNKNOWN = 999                    /**< Unknown Layer */
+
+
 } ml_train_layer_type_e;
 
 /**

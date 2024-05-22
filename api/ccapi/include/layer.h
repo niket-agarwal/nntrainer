@@ -36,6 +36,7 @@ namespace train {
 enum LayerType {
   LAYER_IN = ML_TRAIN_LAYER_TYPE_INPUT, /**< Input Layer type */
   LAYER_FC = ML_TRAIN_LAYER_TYPE_FC,    /**< Fully Connected Layer type */
+  LAYER_SWIGLU = ML_TRAIN_LAYER_TYPE_SWIGLU,   
   LAYER_BN = ML_TRAIN_LAYER_TYPE_BN,    /**< Batch Normalization Layer type */
   LAYER_CONV2D = ML_TRAIN_LAYER_TYPE_CONV2D, /**< Convolution 2D Layer type */
   LAYER_POOLING2D = ML_TRAIN_LAYER_TYPE_POOLING2D, /**< Pooling 2D Layer type */
@@ -301,7 +302,13 @@ FullyConnected(const std::vector<std::string> &properties = {}) {
 inline std::unique_ptr<Layer> FullyConnectedCl(
   const std::vector<std::string> &properties = {},
   const LayerComputeEngine &compute_engine = LayerComputeEngine::CPU) {
-  return createLayer(LayerType::LAYER_FC, properties, compute_engine);
+  return createLayer(LayerType::LAYER_FC, properties, compute_engine) ;
+  }
+
+inline std::unique_ptr<Layer> SwigluCl(
+  const std::vector<std::string> &properties = {},
+  const LayerComputeEngine &compute_engine = LayerComputeEngine::CPU) {
+  return createLayer(LayerType::LAYER_SWIGLU, properties, compute_engine);
 }
 #endif
 
