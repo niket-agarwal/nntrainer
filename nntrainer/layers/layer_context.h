@@ -7,6 +7,7 @@
  * @see    https://github.com/nnstreamer/nntrainer
  * @author Parichay Kapoor <pk.kapoor@samsung.com>
  * @author Debadri Samaddar <s.debadri@samsung.com>
+ * @author Niket Agarwal <niket.a@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  This is the layer context for each layer
  */
@@ -836,6 +837,8 @@ public:
     SGEMV_FP16 = 1 << 3, /**< placeholder for kernel name */
     DOT_FP16 = 1 << 4,   /**< placeholder for kernel name */
     SGEMM_FP16 = 1 << 5, /**< placeholder for kernel name */
+    SWIGLU = 1 << 6,     /**< placeholder for kernel name */
+    SWIGLU_FP16 = 1 << 7 /**< placeholder for kernel name */
   };
 
   /**

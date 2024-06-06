@@ -18,6 +18,7 @@ Copyright (C) 2021 Jihoon Lee <jhoon.it.lee@samsung.com>
 @author Jihoon Lee <jhoon.it.lee@samsung.com>
 @author Sungsik Kong <ss.kong@samsung.com>
 @author	Debadri Samaddar <s.debadri@samsung.com>
+@author	Niket Agarwal <niket.a@samsung.com>
 """
 
 import warnings
@@ -878,6 +879,13 @@ if __name__ == "__main__":
     swiglu_layer = K.layers.Lambda(swiglu)
 
     record_single(
+        swiglu_layer,
+        [(2, 3, 3, 3), (2, 3, 3, 3)],
+        "swiglu",
+        input_type="float",
+    )
+
+    record_single_fp16(
         swiglu_layer,
         [(2, 3, 3, 3), (2, 3, 3, 3)],
         "swiglu",
