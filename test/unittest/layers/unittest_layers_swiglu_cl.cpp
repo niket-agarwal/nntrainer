@@ -34,13 +34,18 @@ auto swiglu_basic_plain = LayerGoldenTestParamType(
     LayerGoldenTestParamOptions::USE_INC_FORWARD,
   "nchw", "fp32", "fp32");
 
-// auto swiglu_basic_plain_nhwc = LayerGoldenTestParamType(
-//   nntrainer::createLayer<nntrainer::SwiGLULayerCl>, {},
-//   "2:3:3:3", "swiglu.nnlayergolden",
-//   LayerGoldenTestParamOptions::SKIP_CALC_DERIV |
-//     LayerGoldenTestParamOptions::SKIP_CALC_GRAD |
-//     LayerGoldenTestParamOptions::USE_INC_FORWARD,
-//   "nhwc", "fp32", "fp32");
-
 GTEST_PARAMETER_TEST(SwigluGPU, LayerGoldenTest,
                      ::testing::Values(swiglu_basic_plain));
+
+#ifdef ENABLE_FP16
+auto swiglu_basic_plain_w16a16 = LayerGoldenTestParamType(
+  nntrainer::createLayer<nntrainer::SwiGLULayerCl>, {},
+  "2:3:3:3,2:3:3:3", "swiglufp16.nnlayergolden",
+  LayerGoldenTestParamOptions::SKIP_CALC_DERIV |
+    LayerGoldenTestParamOptions::SKIP_CALC_GRAD | 
+    LayerGoldenTestParamOptions::USE_INC_FORWARD,
+  "nchw", "fp16", "fp16");
+
+GTEST_PARAMETER_TEST(SwigluGPU16, LayerGoldenTest,
+                     ::testing::Values(swiglu_basic_plain_w16a16));
+#endif

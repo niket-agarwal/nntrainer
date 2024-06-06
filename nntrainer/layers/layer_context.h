@@ -824,7 +824,8 @@ public:
     FCSGEMV = 1, /**< placeholder for kernel name */
     FCDOT = 2,   /**< placeholder for kernel name */
     FCSGEMM = 4,  /**< placeholder for kernel name */
-    SWIGLU = 8  /**< placeholder for kernel name */
+    SWIGLU = 8,  /**< placeholder for kernel name */
+    SWIGLU_FP16 = 16
   };
 
   /**

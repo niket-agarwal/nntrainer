@@ -91,7 +91,7 @@ public:
   inline static const std::string type = "swiglu";
 
   static opencl::Kernel kernel_swiglu;
-
+  static opencl::Kernel kernel_swiglu_fp16;
   
   std::tuple<props::Print>
     swiglu_props; /**< fc layer properties : unit - number of output neurons */
@@ -103,6 +103,10 @@ public:
   void swiglu_cl(const float *matAdata, const float *vecXdata,
                    float *vecYdata, unsigned int dim1, unsigned int dim2,
                    RunLayerContext &context);
+  void swiglu_cl_fp16(const __fp16 *matAdata,
+                                        const __fp16 *vecXdata, __fp16 *vecYdata,
+                                        unsigned int dim1, unsigned int dim2,
+                                        RunLayerContext &context);
 
 };
 

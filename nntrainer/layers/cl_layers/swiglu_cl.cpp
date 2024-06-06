@@ -16,6 +16,16 @@
 
 
 
+std::string swiglu_cl_kernel_fp16_ =
+  R"(
+    #pragma OPENCL EXTENSION cl_khr_fp16 : enable
+    __kernel void swiglu_cl_fp16(__global const half *in1, __global const half *in2, __global half *out) {
+    int i = get_global_id(0);
+    half swish = in1[i] * exp(in1[i]) / (1 + exp(in1[i]));
+    out[i] = swish * in2[i];
+    printf("going in the fp16 kernel");
+})";
+
 std::string swiglu_cl_kernel_ =
   R"(__kernel void swiglu_cl(__global const float *in1, __global const float *in2, __global float *out) {
     int i = get_global_id(0);
@@ -57,10 +67,7 @@ void SwiGLULayerCl::forwarding(RunLayerContext &context,
   Tensor &in1 = context.getInput(INPUT_IDX_1);
   Tensor &in2 = context.getInput(INPUT_IDX_2);
   Tensor &out = context.getOutput(OUT_IDX);
-
-  if (in1.getDataType() == ml::train::TensorDim::DataType::FP32) {
-      swigluProcess(in1, in2, out, context);
-    } 
+  swigluProcess(in1, in2, out, context);
 }
 
 
@@ -117,44 +124,36 @@ void SwiGLULayerCl::incremental_forwarding(RunLayerContext &context, unsigned in
     to = 1;
   }
 
-  if (in1.getDataType() == ml::train::TensorDim::DataType::FP32) {
-      swigluProcess(in1, in2, out, context);
-    } 
+  swigluProcess(in1, in2, out, context);
 }
 
 opencl::Kernel SwiGLULayerCl::kernel_swiglu;
+opencl::Kernel SwiGLULayerCl::kernel_swiglu_fp16;
 
 void SwiGLULayerCl::swigluProcess(Tensor const &in1, Tensor const &in2,
                                  Tensor &result, 
                                  RunLayerContext &context)  {
 
-  // unsigned int in1dim1, in1dim2, in2dim1, in2dim2;
-  // if (in1.getFormat() == Tformat::NHWC) {
-  //   in1dim1 = in1.batch() * in1.height() * in1.width();
-  //   in1dim2 = in1.channel();
-  //   in2dim1 = in2.batch() * in2.height() * in2.width();
-  //   in2dim2 = in2.channel();
-  // } else {
-  //   in1dim1 = in1.batch() * in1.channel() * in1.height();
-  //   in1dim2 = in1.width();
-  //   in2dim1 = in2.batch() * in2.channel() * in2.height();
-  //   in2dim2 = in2.width();
-  // }
   unsigned int dim1,dim2;
   dim1 = in1.batch() * in1.channel() * in1.height();
   dim2 = in1.width();
 
-
-
-    //unsigned int size = context.getNumInputs();
     if (in1.getDataType() == ml::train::TensorDim::DataType::FP32) {
       const float *data1 = in1.getData();
       const float *data2 = in2.getData();
       float *rdata = result.getData();
-
       swiglu_cl(data1,  data2, rdata, dim1, dim2, context);
-    } else
-    throw std::invalid_argument("Error: OpenCL fp16 is not supported yet.");
+    }
+    else if (in1.getDataType() == ml::train::TensorDim::DataType::FP16){
+#ifdef ENABLE_FP16
+    const _FP16 *data1 = in1.getData<_FP16>();
+    const _FP16 *data2 = in2.getData<_FP16>();
+    _FP16 *rdata = result.getData<_FP16>();
+    swiglu_cl_fp16(data1,  data2, rdata, dim1, dim2, context);
+#else
+    throw std::invalid_argument("Error: enable-fp16 is not enabled");
+#endif
+  }
 }
 
 void SwiGLULayerCl::swiglu_cl(const float *matAdata,
@@ -227,6 +226,91 @@ void SwiGLULayerCl::swiglu_cl(const float *matAdata,
 
     result = context.command_queue_inst_.DispatchCommand(
       SwiGLULayerCl::kernel_swiglu, work_groups_count, work_group_size);
+    if (!result) {
+      break;
+    }
+
+    result = inOutY.ReadData(context.command_queue_inst_, vecYdata);
+    if (!result) {
+      break;
+    }
+
+    ml_logi("BBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+
+  } while (false);
+}
+
+
+void SwiGLULayerCl::swiglu_cl_fp16(const __fp16 *matAdata,
+                                        const __fp16 *vecXdata, __fp16 *vecYdata,
+                                        unsigned int dim1, unsigned int dim2,
+                                        RunLayerContext &context) {
+
+  bool result = false;
+  
+
+  do {
+    result =
+      context.clCreateKernel(swiglu_cl_kernel_fp16_, context.LayerKernel::SWIGLU_FP16,
+                             SwiGLULayerCl::kernel_swiglu_fp16);
+    if (!result) {
+      break;
+    }
+
+    size_t dim1_size = sizeof(float) * dim1;
+    size_t dim2_size = sizeof(float) * dim2;
+    int dim = int (dim1 * dim2);
+    opencl::Buffer inputA(context.context_inst_, dim1_size * dim2_size, true,
+                          nullptr);
+
+    opencl::Buffer inputX(context.context_inst_, dim1_size * dim2_size, true, nullptr);
+
+    opencl::Buffer inOutY(context.context_inst_, dim1_size * dim2_size, true, nullptr);
+
+    result = inputA.WriteData(context.command_queue_inst_, matAdata);
+    if (!result) {
+      break;
+    }
+
+    result = inputX.WriteData(context.command_queue_inst_, vecXdata);
+    if (!result) {
+      break;
+    }
+
+    result = inOutY.WriteData(context.command_queue_inst_, vecYdata);
+    if (!result) {
+      break;
+    }
+
+    result = SwiGLULayerCl::kernel_swiglu_fp16.SetKernelArguments(
+      0, &inputA, sizeof(cl_mem));
+    if (!result) {
+      break;
+    }
+
+    result = SwiGLULayerCl::kernel_swiglu_fp16.SetKernelArguments(
+      1, &inputX, sizeof(cl_mem));
+    if (!result) {
+      break;
+    }
+
+    result = SwiGLULayerCl::kernel_swiglu_fp16.SetKernelArguments(
+      2, &inOutY, sizeof(cl_mem));
+    if (!result) {
+      break;
+    }
+
+    // result = SwiGLULayerCl::kernel_swiglu.SetKernelArguments(
+    //   3, &dim, sizeof(int));
+    // if (!result) {
+    //   break;
+    // }
+
+    const int work_groups_count[3] = {dim, 1, 1};
+    const int work_group_size[3] = {32, 32, 1}; // test-value
+
+    result = context.command_queue_inst_.DispatchCommand(
+      SwiGLULayerCl::kernel_swiglu_fp16, work_groups_count, work_group_size);
     if (!result) {
       break;
     }

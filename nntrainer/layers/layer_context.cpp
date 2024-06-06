@@ -656,6 +656,8 @@ std::string RunLayerContext::getKernelName(LayerKernel layerKernel) {
     return "fc_sgemm_cl";
   case LayerKernel::SWIGLU:
     return "swiglu_cl";
+  case LayerKernel::SWIGLU_FP16:
+    return "swiglu_cl_fp16";
   default:
     return "";
   }
