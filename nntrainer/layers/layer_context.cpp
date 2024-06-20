@@ -7,6 +7,7 @@
  * @see    https://github.com/nnstreamer/nntrainer
  * @author Parichay Kapoor <pk.kapoor@samsung.com>
  * @author Debadri Samaddar <s.debadri@samsung.com>
+ * @author Niket Agarwal <niket.a@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  This is the layer context for each layer
  */
@@ -662,6 +663,10 @@ std::string RunLayerContext::getKernelName(LayerKernel layerKernel) {
     return "dot_cl_fp16";
   case LayerKernel::SGEMM_FP16:
     return "sgemm_cl_fp16";
+  case LayerKernel::RESHAPE:
+    return "reshape_cl";
+  case LayerKernel::RESHAPE_FP16:
+    return "reshape_cl_fp16";
   default:
     return "";
   }

@@ -7,6 +7,7 @@
  * @see    https://github.com/nnstreamer/nntrainer
  * @author Parichay Kapoor <pk.kapoor@samsung.com>
  * @author Debadri Samaddar <s.debadri@samsung.com>
+ * @author Niket Agarwal <niket.a@samsung.com>
  * @bug	   No known bugs except for NYI items
  * @brief  This is layers interface for c++ API
  *
@@ -347,8 +348,9 @@ Flatten(const std::vector<std::string> &properties = {}) {
  * @brief Helper function to create reshape layer
  */
 inline std::unique_ptr<Layer>
-Reshape(const std::vector<std::string> &properties = {}) {
-  return createLayer(LayerType::LAYER_RESHAPE, properties);
+ReshapeCl(const std::vector<std::string> &properties = {},
+        const LayerComputeEngine &compute_engine = LayerComputeEngine::CPU) {
+  return createLayer(LayerType::LAYER_RESHAPE, properties, compute_engine);
 }
 
 /**

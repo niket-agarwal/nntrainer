@@ -91,6 +91,7 @@ static TensorPacks prepareTensors(const InitLayerContext &context,
 
     for (auto &dim : dims) {
       vg.emplace_back(dim, Tensor::Initializer::NONE, true, true, "golden");
+      printf(" Coming inside prepareTensors line 94 \n ");
       sizeCheckedReadTensor(vg.back().getVariableRef(), file,
                             vg.back().getName());
     }
@@ -125,6 +126,7 @@ static TensorPacks prepareTensors(const InitLayerContext &context,
 
     for (auto &spec : specs) {
       weights.emplace_back(spec, true);
+      printf(" Coming over line 128  \n");
       sizeCheckedReadTensor(weights.back().getVariableRef(), file,
                             weights.back().getName());
       weights.back().getGradientRef().setZero();
@@ -282,12 +284,17 @@ static void compareRunContext(RunLayerContext &rc, std::ifstream &file,
                            bool skip_compare, bool skip_cos_sim,
                            const std::string &name,
                            unsigned int match_percentage = 100) {
+
+    printf("The lngth is %d  \n", length);
+    printf("The str is %s  \n", name.c_str());
+
     for (unsigned i = 0; i < length; ++i) {
       if (!pred(i)) {
         continue;
       }
       const auto &tensor = tensor_getter(i);
       auto answer = tensor.clone();
+      printf(" Coming over line 293  \n");
       sizeCheckedReadTensor(answer, file, name + " at " + std::to_string(i));
 
       if (skip_compare) {

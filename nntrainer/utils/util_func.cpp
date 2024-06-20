@@ -74,6 +74,7 @@ static void checkFile(const T &file, const char *error_msg) {
 void checkedRead(std::ifstream &file, char *array, std::streamsize size,
                  const char *error_msg) {
   file.read(array, size);
+  printf("size in checkedRead : %d", size);
 
   checkFile(file, error_msg);
 }

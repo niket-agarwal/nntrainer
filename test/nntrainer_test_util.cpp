@@ -330,9 +330,11 @@ void sizeCheckedReadTensor(nntrainer::Tensor &t, std::ifstream &file,
 
   if (t.getDataType() == ml::train::TensorDim::DataType::FP32) {
     nntrainer::checkedRead(file, (char *)&sz, sizeof(unsigned));
+    printf("sz in fp32 : %d", sz);
   } else if (t.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
     nntrainer::checkedRead(file, (char *)&sz, sizeof(_FP16));
+    printf("sz in fp16 : %d", sz);
 #else
     throw std::invalid_argument("Error: enable-fp16 is not enabled");
 #endif
