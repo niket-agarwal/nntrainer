@@ -14,6 +14,7 @@
 
 #include <cl_context.h>
 #include <fc_layer_cl.h>
+#include <concat_cl.h>
 
 namespace nntrainer {
 
@@ -26,6 +27,9 @@ static void add_default_object(ClContext &cc) {
   cc.registerFactory(nntrainer::createLayer<FullyConnectedLayerCl>,
                      FullyConnectedLayerCl::type,
                      ml::train::LayerType::LAYER_FC);
+  cc.registerFactory(nntrainer::createLayer<ConcatLayerCl>,
+                     ConcatLayerCl::type,
+                     ml::train::LayerType::LAYER_CONCAT);
 }
 
 static void registerer(ClContext &cc) noexcept {

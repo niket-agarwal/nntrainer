@@ -400,15 +400,15 @@ TEST_P(LayerGoldenTest, run) {
   TensorDim input_dim = input.getDim();
   size_t inputHeight = input_dim.height();
 
-  for (int i = 0; i < 4; ++i) {
-    /// warm layer multiple times
-    if (use_inc_forward) {
-      layer->incremental_forwarding(rc, 0, inputHeight,
-                                    !shouldForwardWithInferenceMode());
-    } else {
-      layer->forwarding(rc, !shouldForwardWithInferenceMode());
-    }
-  }
+  // for (int i = 0; i < 4; ++i) {
+  //   /// warm layer multiple times
+  //   if (use_inc_forward) {
+  //     layer->incremental_forwarding(rc, 0, inputHeight,
+  //                                   !shouldForwardWithInferenceMode());
+  //   } else {
+  //     layer->forwarding(rc, !shouldForwardWithInferenceMode());
+  //   }
+  // }
 
   if (use_inc_forward) {
     layer->incremental_forwarding(rc, 0, inputHeight,

@@ -836,6 +836,7 @@ public:
     SGEMV_FP16 = 1 << 3, /**< placeholder for kernel name */
     DOT_FP16 = 1 << 4,   /**< placeholder for kernel name */
     SGEMM_FP16 = 1 << 5, /**< placeholder for kernel name */
+    CONCAT = 1 << 6,     /**< placeholder for kernel name */
   };
 
   /**
