@@ -586,7 +586,17 @@ thread_dep = dependency('threads') # pthread for tensorflow-lite
 
 if get_option('platform') == 'android'
   iniparser_root = subprojects_dir_absolute / 'iniparser'
-  iniparser_dep = declare_dependency()
+  message('preparing iniparser')
+  run_command([meson.source_root() / 'jni' / 'prepare_iniparser.sh', meson.build_root(), meson.source_root()], check: true)
+  # For Android, we need to build iniparser from source
+  iniparser_options = cmake.subproject_options()
+  iniparser_options.add_cmake_defines({'BUILD_DOCS': false})
+  iniparser_options.add_cmake_defines({'BUILD_EXAMPLES': false})
+  iniparser_options.add_cmake_defines({'BUILD_TESTING': false})
+  iniparser_options.add_cmake_defines({'BUILD_SHARED_LIBS': false})
+  iniparser_options.add_cmake_defines({'CMAKE_BUILD_TYPE': cmake_build_type})
+  iniparser_subproject = cmake.subproject('iniparser', options: iniparser_options, required: true)
+  iniparser_dep = iniparser_subproject.dependency('iniparser-static')
 else
   iniparser_dep = dependency('iniparser', required : false, version : '>=3.2') # iniparser
 
