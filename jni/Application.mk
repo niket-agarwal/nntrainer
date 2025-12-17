@@ -3,3 +3,4 @@ LIBCXX_USE_GABIXX := true
 APP_STL           := c++_shared
 APP_PLATFORM      := android-29
 APP_SUPPORT_FLEXIBLE_PAGE_SIZES := true
+APP_CPPFLAGS := -fexceptions -frtti
