@@ -1,4 +1,4 @@
-layer_common_test_inc = [ include_directories('./', '../../include') ]
+layer_common_test_inc = [ include_directories('./', '../../include', '../../../Applications/CausalLM/layers') ]
 layer_common_test_standalone_files = files('layers_standalone_common_tests.cpp')
 layer_common_test_dependent_files = files('layers_dependent_common_tests.cpp')
 
@@ -123,6 +123,9 @@ if get_option('enable-opencl')
   test_target += 'unittest_layers_concat_cl.cpp'
   test_target += 'unittest_layers_swiglu_cl.cpp'
 endif
+
+test_target += 'unittest_layers_causallm_swiglu.cpp'
+test_target += meson.source_root() / 'Applications' / 'CausalLM' / 'layers' / 'swiglu.cpp'
 
 if get_option('enable-tflite-backbone')
   test_target += 'unittest_layers_tflite.cpp'

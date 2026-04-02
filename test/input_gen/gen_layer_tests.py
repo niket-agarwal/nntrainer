@@ -914,6 +914,14 @@ if __name__ == "__main__":
         input_type="float",
     )
 
+    # CausalLM SwiGLU
+    record_single(
+        swiglu_layer,
+        [(2, 1, 1, 10), (2, 1, 1, 10)],
+        "causallm_swiglu",
+        input_type="float",
+    )
+
     def reshape_tensor(tensor, batch_size, input_channel, input_height, input_width):
         output_height = 1
         output_width = input_channel * input_height * input_width
