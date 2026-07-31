@@ -109,6 +109,14 @@ public:
 private:
   std::tuple<nntrainer::props::SkipPrefill> swiglu_props;
   bool skip_prefill = false;
+
+  /**
+   * @brief shared elementwise SwiGLU compute used by both forwarding (full
+   *        sequence, [0, height)) and incremental_forwarding (decode step,
+   *        [from, to)).
+   */
+  void computeSwiGLU(nntrainer::RunLayerContext &context, unsigned int from,
+                     unsigned int to);
 };
 
 } // namespace causallm
