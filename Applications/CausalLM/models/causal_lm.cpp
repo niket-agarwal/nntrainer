@@ -238,6 +238,10 @@ std::pair<Tensor, Tensor> CausalLM::constructModel() {
   if (TIE_WORD_EMBEDDINGS)
     lmhead_prop.emplace_back(withKey("shared_from", "embedding0"));
 
+  // lm_head is never a LoRA target: freeze it whenever LoRA is active.
+  if (LORA_RANK > 0)
+    lmhead_prop.emplace_back(withKey("trainable", "false"));
+
   LayerHandle lmhead(createLayer(lmhead_type, lmhead_prop));
   Tensor y = lmhead(h);
 
