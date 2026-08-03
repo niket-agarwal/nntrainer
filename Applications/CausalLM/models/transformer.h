@@ -339,6 +339,27 @@ public:
   virtual void save_weight_lora(const std::string &lora_path);
 
   /**
+   * @brief Save LoRA adapters as Q4_0 (block=32, repacked for the W4A8 GEMM
+   *        kernel). When LORA_QAT is active, force-feeds the per-block EMA
+   *        scales calibrated during training instead of recomputing a
+   *        natural per-block scale at save time, so the saved adapter
+   *        matches the exact quantization the model trained against.
+   * @param path output path for the Q4_0 adapter file
+   */
+  virtual void save_weight_lora_q4(const std::string &path);
+
+  /**
+   * @brief Load a pretrained (non-LoRA) base checkpoint, then load Q4_0
+   *        LoRA adapters directly into Q4_0-dtype loraA/loraB tensors (see
+   *        LORA_WEIGHT_Q4), so the W4A8 GEMM kernel fires at inference.
+   * @param base_path path to the pretrained (non-LoRA) checkpoint
+   * @param lora_q4_path path to a Q4_0 adapter file (from
+   *        save_weight_lora_q4())
+   */
+  virtual void load_weight_lora_q4(const std::string &base_path,
+                                   const std::string &lora_q4_path);
+
+  /**
    * @brief Visit each layer in the compiled model (passthrough to
    *        ml::train::Model::forEachLayer). Exposed publicly so callers
    *        (tests, tooling) can inspect/manipulate weights without needing
@@ -503,6 +524,18 @@ protected:
    *  weights (not per layer) — so flagging every adapter yields standard
    *  global-norm clipping over the whole adapter. */
   float LORA_CLIP_GRAD = 0.0f;
+
+  /** Enable per-block Q4_0 QAT (fake-quant + EMA calibration + STE) on
+   *  loraA/loraB, from nntr_cfg's "lora_qat". Default false trains the
+   *  adapters in plain FP32. */
+  bool LORA_QAT = false;
+
+  /** Store/load LoRA adapters as real Q4_0 tensors, from nntr_cfg's
+   *  "lora_weight_q4". Combined with LORA_QAT, the adapters are
+   *  fake-quantized (with EMA-calibrated scales) during training and can be
+   *  saved/loaded as Q4_0 so the W4A8 GEMM kernel fires at inference.
+   *  Requires lora_rank to be a multiple of 32. */
+  bool LORA_WEIGHT_Q4 = false;
 
   /** When true, the RMSNorm layers stay trainable even though LoRA is
    *  active, i.e. the "LoRA + norms" recipe. This is what exercises the
