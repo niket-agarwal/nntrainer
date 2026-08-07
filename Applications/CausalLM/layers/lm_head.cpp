@@ -31,7 +31,13 @@ enum LmHeadParams {
   bias,
 };
 
-unsigned int g_lm_head_read_row = std::numeric_limits<unsigned int>::max();
+std::vector<unsigned int> g_lm_head_read_row;
+
+namespace {
+inline unsigned int readRowForBatch(unsigned int b, unsigned int fallback) {
+  return (b < g_lm_head_read_row.size()) ? g_lm_head_read_row[b] : fallback;
+}
+} // namespace
 
 LmHeadLayer::LmHeadLayer() :
   LayerImpl(), lmhead_props(nntrainer::props::Unit()) {
@@ -133,9 +139,7 @@ void LmHeadLayer::forwarding(nntrainer::RunLayerContext &context,
   ml::train::TensorDim input_dim = input_.getDim();
   ml::train::TensorDim hidden_dim = hidden_.getDim();
 
-  unsigned int read_row = (g_lm_head_read_row != std::numeric_limits<unsigned int>::max())
-                            ? g_lm_head_read_row
-                            : (input_dim.height() - 1);
+  const unsigned int fallback_row = input_dim.height() - 1;
 
   ml::train::TensorDim input_step_dim = input_dim;
   ml::train::TensorDim hidden_step_dim = hidden_dim;
@@ -147,6 +151,7 @@ void LmHeadLayer::forwarding(nntrainer::RunLayerContext &context,
   unsigned int b_size = input_dim.batch();
 
   for (unsigned int b = 0; b < b_size; ++b) {
+    const unsigned int read_row = readRowForBatch(b, fallback_row);
     nntrainer::Tensor input_step = input_.getSharedDataTensor(
       input_step_dim,
       b * input_dim.getFeatureLen() + read_row * input_dim.width(), true);
@@ -227,9 +232,7 @@ void LmHeadLayer::calcDerivative(nntrainer::RunLayerContext &context) {
   ml::train::TensorDim input_dim = dx.getDim();
   ml::train::TensorDim dy_dim = dy.getDim();
 
-  unsigned int read_row = (g_lm_head_read_row != std::numeric_limits<unsigned int>::max())
-                            ? g_lm_head_read_row
-                            : (input_dim.height() - 1);
+  const unsigned int fallback_row = input_dim.height() - 1;
 
   dx.setZero();
 
@@ -243,6 +246,7 @@ void LmHeadLayer::calcDerivative(nntrainer::RunLayerContext &context) {
   unsigned int b_size = input_dim.batch();
 
   for (unsigned int b = 0; b < b_size; ++b) {
+    const unsigned int read_row = readRowForBatch(b, fallback_row);
     nntrainer::Tensor dx_step = dx.getSharedDataTensor(
       dx_step_dim,
       b * input_dim.getFeatureLen() + read_row * input_dim.width(), true);
@@ -286,10 +290,7 @@ void LmHeadLayer::calcGradient(nntrainer::RunLayerContext &context) {
   const unsigned int in_w = in_dim.width();
   const unsigned int unit = dy_dim.width();
 
-  const unsigned int read_row =
-    (g_lm_head_read_row != std::numeric_limits<unsigned int>::max())
-      ? g_lm_head_read_row
-      : (in_dim.height() - 1);
+  const unsigned int fallback_row = in_dim.height() - 1;
 
   const bool first =
     context.isGradientFirstAccess(weight_idx[LmHeadParams::weight]);
@@ -301,6 +302,7 @@ void LmHeadLayer::calcGradient(nntrainer::RunLayerContext &context) {
   float *dw_ = dw.getData<float>();
 
   for (unsigned int b = 0; b < in_dim.batch(); ++b) {
+    const unsigned int read_row = readRowForBatch(b, fallback_row);
     const float *x_row =
       x + b * in_dim.getFeatureLen() + read_row * in_w;
     const float *dy_row = dy_ + b * dy_dim.getFeatureLen();
