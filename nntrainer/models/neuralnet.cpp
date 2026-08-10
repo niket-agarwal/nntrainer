@@ -322,6 +322,13 @@ int NeuralNetwork::initialize(ExecutionMode mode) {
                                             label_layer_prop.end());
   }
 
+  /**
+   * A gradient-free optimizer never calls backwarding(), so per-weight
+   * gradient tensors would be reserved and zero-filled but never written.
+   * Tell the graph to skip them before it finalizes each layer's context.
+   */
+  model_graph.setSkipGradients(opt && !opt->requiresBackprop());
+
   status = model_graph.initialize(
     exec_mode, input_conn,
     std::vector<Connection>(label_layers.begin(), label_layers.end()));
@@ -419,6 +426,9 @@ NeuralNetwork::~NeuralNetwork() {
  */
 sharedConstTensors NeuralNetwork::forwarding(
   bool training, std::function<bool(void *userdata)> stop_cb, void *userdata) {
+
+  /** a fresh forward makes the layers' own loss authoritative again */
+  gradient_free_loss_valid = false;
 
   unsigned int lookahead = std::get<props::FsuLookahead>(model_flex_props);
   bool fsu_mode = std::get<props::Fsu>(model_flex_props);
@@ -1337,6 +1347,9 @@ void NeuralNetwork::load(const std::string &file_path,
 }
 
 float NeuralNetwork::getLoss() {
+  if (gradient_free_loss_valid)
+    return gradient_free_loss;
+
   loss = 0.0f;
 
   for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); iter++) {
@@ -1787,10 +1800,23 @@ int NeuralNetwork::train_run(
 
   auto train_for_iteration =
     [this, stop_cb, stop_user_data](RunStats &stat, DataBuffer &buffer) {
-      ml_logi("train for iteration");
-      forwarding(true, stop_cb, stop_user_data);
-      backwarding(iter++, stop_cb, stop_user_data);
-
+      if (!opt->requiresBackprop()) {
+        ml_logi("train for iteration using gradient-free optimizer");
+        auto param_ptrs = getParameterPointers();
+        float step_loss = opt->trainStep(
+          [this, stop_cb, stop_user_data]() {
+            forwarding(true, stop_cb, stop_user_data);
+          },
+          [this]() { return getLoss(); }, param_ptrs);
+        /** see NeuralNetwork::gradient_free_loss */
+        gradient_free_loss = step_loss;
+        gradient_free_loss_valid = true;
+        iter++;
+      } else {
+        ml_logi("train for iteration");
+        forwarding(true, stop_cb, stop_user_data);
+        backwarding(iter++, stop_cb, stop_user_data);
+      }
       // To avoid unconsidered memory leak, we need to clear the cache
       model_graph.flushCache();
 
@@ -2311,4 +2337,25 @@ void NeuralNetwork::exports(const ml::train::ExportMethods &method,
     throw std::runtime_error{"Unsupported export method"};
   }
 }
+
+std::vector<nntrainer::Tensor *> NeuralNetwork::getParameterPointers() {
+  std::vector<nntrainer::Tensor *> params;
+  /**
+   * @note This deliberately does not filter on LayerNode::getTrainable().
+   * For a gradient-free optimizer the graph is finalized with the trainable
+   * flag forced off (see NetworkGraph::setSkipGradients) so that no gradient
+   * tensors are allocated; that flag therefore no longer indicates which
+   * weights should be optimized. Every weight in the graph is perturbed.
+   */
+  forEachLayer(
+    [&](ml::train::Layer &layer, RunLayerContext &rc, void *user_data) {
+      LayerNode &ln = static_cast<LayerNode &>(layer);
+      for (unsigned int i = 0; i < ln.getNumWeights(); ++i) {
+        params.push_back(&ln.getWeight(i));
+      }
+    },
+    nullptr);
+  return params;
+}
+
 } /* namespace nntrainer */

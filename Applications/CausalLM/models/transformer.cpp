@@ -282,7 +282,9 @@ void Transformer::initialize() {
 /**
  * @brief Build and compile the symbolic transformer graph for LoRA training.
  */
-void Transformer::initializeForTraining(float lr, unsigned int epochs) {
+void Transformer::initializeForTraining(
+  float lr, unsigned int epochs, const std::string &optimizer_type,
+  const std::vector<std::string> &optimizer_props) {
   FOR_TRAINING = true;
 
   registerCustomLayers();
@@ -294,8 +296,11 @@ void Transformer::initializeForTraining(float lr, unsigned int epochs) {
     withKey("model_tensor_type", MODEL_TENSOR_TYPE)};
   model->setProperty(model_props);
 
-  auto optimizer =
-    ml::train::createOptimizer("adam", {withKey("learning_rate", lr)});
+  std::vector<std::string> props = optimizer_props;
+  if (props.empty() && optimizer_type == "adam") {
+    props = {withKey("learning_rate", lr)};
+  }
+  auto optimizer = ml::train::createOptimizer(optimizer_type, props);
   if (model->setOptimizer(std::move(optimizer))) {
     throw std::invalid_argument("Failed to set optimizer.");
   }

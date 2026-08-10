@@ -271,15 +271,30 @@ public:
    * @brief Build and compile the symbolic transformer graph for LoRA
    *        training (ExecutionMode::TRAIN), as opposed to initialize()
    *        which always compiles for INFERENCE. Adds a `cross_softmax`
-   *        loss layer on top of constructModel()'s output. Only
-   *        loraA/loraB weights (inside FC layers targeted by lora_target)
-   *        end up trainable; every other layer is frozen — see
-   *        hasLoRA()/appendLoRAProps() and their call sites in
-   *        createAttention()/createMlp()/CausalLM::constructModel().
-   * @param lr learning rate for the Adam optimizer
+   *        loss layer on top of constructModel()'s output. With
+   *        lora_rank > 0, only loraA/loraB weights (inside FC layers
+   *        targeted by lora_target) end up trainable and every other
+   *        layer is frozen — see hasLoRA()/appendLoRAProps() and their
+   *        call sites in createAttention()/createMlp()/
+   *        CausalLM::constructModel(). With lora_rank == 0, none of
+   *        those freeze branches fire and every layer stays trainable
+   *        (full-parameter fine-tuning).
+   * @param lr learning rate; used to build the default Adam optimizer's
+   *        `learning_rate` property when optimizer_type=="adam" and
+   *        optimizer_props is empty. Ignored otherwise — pass the
+   *        optimizer's own learning-rate property inside optimizer_props.
    * @param epochs number of epochs to configure on the model
+   * @param optimizer_type optimizer name understood by
+   *        ml::train::createOptimizer (default "adam", e.g. "MeZO" for
+   *        gradient-free training)
+   * @param optimizer_props properties forwarded to the optimizer
+   *        constructor. When empty and optimizer_type=="adam", defaults
+   *        to {"learning_rate=<lr>"} for backward compatibility.
    */
-  virtual void initializeForTraining(float lr, unsigned int epochs);
+  virtual void
+  initializeForTraining(float lr, unsigned int epochs,
+                        const std::string &optimizer_type = "adam",
+                        const std::vector<std::string> &optimizer_props = {});
 
   /**
    * @brief Set the dataset used for training/validation.
