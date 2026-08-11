@@ -215,6 +215,10 @@ void Transformer::setupParameters(json &cfg, json &generation_cfg,
                      : 0.0f;
   TRAIN_NORMS = nntr_cfg.contains("lora_train_norms") &&
                 nntr_cfg["lora_train_norms"].get<bool>();
+  LORA_QAT =
+    nntr_cfg.contains("lora_qat") && nntr_cfg["lora_qat"].get<bool>();
+  LORA_WEIGHT_Q4 = nntr_cfg.contains("lora_weight_q4") &&
+                  nntr_cfg["lora_weight_q4"].get<bool>();
 
   return;
 };
@@ -232,6 +236,10 @@ void Transformer::appendLoRAProps(std::vector<std::string> &props) const {
   if (LORA_CLIP_GRAD > 0.0f)
     props.emplace_back(
       withKey("clip_grad_by_norm", std::to_string(LORA_CLIP_GRAD)));
+  if (LORA_QAT)
+    props.emplace_back(withKey("lora_qat", "true"));
+  if (LORA_WEIGHT_Q4)
+    props.emplace_back(withKey("lora_weight_q4", "true"));
 }
 
 /**
