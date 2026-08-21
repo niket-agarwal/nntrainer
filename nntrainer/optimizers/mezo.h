@@ -14,6 +14,8 @@
 #ifdef __cplusplus
 
 #include <common_properties.h>
+#include <cmath>
+
 #include <optimizer_devel.h>
 
 namespace nntrainer {
@@ -37,6 +39,35 @@ class MeZOLearningRate : public Property<float> {
 public:
   static constexpr const char *key =
     "MeZO_learning_rate";          /**< unique key to access */
+  using prop_tag = float_prop_tag; /**< property type */
+};
+
+/**
+ * @class MeZOLearningRateDecay
+ * @brief Per-step multiplicative decay applied to the MeZO learning rate
+ * @details MeZO takes one update per step from a single scalar estimate of a
+ * very high-dimensional gradient, so a rate large enough to make early
+ * progress is too coarse to converge finely later: the loss descends, then
+ * random-walks around a floor. Decaying the rate lets the same run do both.
+ * 1.0 (the default) reproduces the previous fixed-rate behaviour exactly.
+ */
+class MeZOLearningRateDecay : public Property<float> {
+public:
+  MeZOLearningRateDecay(float value = 1.0f) { set(value); }
+  static constexpr const char *key =
+    "MeZO_lr_decay";               /**< unique key to access */
+  using prop_tag = float_prop_tag; /**< property type */
+};
+
+/**
+ * @class MeZOMinLearningRate
+ * @brief Floor the decayed learning rate so it never reaches zero
+ */
+class MeZOMinLearningRate : public Property<float> {
+public:
+  MeZOMinLearningRate(float value = 0.0f) { set(value); }
+  static constexpr const char *key =
+    "MeZO_min_learning_rate";      /**< unique key to access */
   using prop_tag = float_prop_tag; /**< property type */
 };
 
@@ -113,6 +144,20 @@ public:
   }
 
   /**
+   * @brief Learning rate for the update about to be applied
+   * @return base rate decayed by MeZO_lr_decay^step_count, floored at
+   *         MeZO_min_learning_rate
+   */
+  float getEffectiveLearningRate() const {
+    const float decay = std::get<MeZOLearningRateDecay>(mezo_props).get();
+    const float base = getLearningRate();
+    if (decay >= 1.0f)
+      return base;
+    const float lr = base * std::pow(decay, static_cast<float>(step_count));
+    return std::max(lr, std::get<MeZOMinLearningRate>(mezo_props).get());
+  }
+
+  /**
    * @brief Update multiple weights using MeZO gradient estimation
    * @param weights Vector of weights to update
    * @param seed Random seed for reproducibility
@@ -135,8 +180,10 @@ public:
   static constexpr const char *type = "MeZO";
 
 private:
-  std::tuple<MeZOEpsilon, MeZOLearningRate>
-    mezo_props; /**< MeZO epsilon and Learning rate */
+  std::tuple<MeZOEpsilon, MeZOLearningRate, MeZOLearningRateDecay,
+             MeZOMinLearningRate>
+    mezo_props;          /**< MeZO epsilon, learning rate and its decay */
+  size_t step_count = 0; /**< updates applied so far, drives the decay */
 };
 } /* namespace nntrainer */
 

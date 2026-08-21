@@ -25,6 +25,7 @@
 #include "model.h"
 #include "model_common_properties.h"
 #include <algorithm>
+#include <unordered_set>
 #include <atomic>
 #include <cmath>
 #include <compute_ops.h>
@@ -2341,17 +2342,29 @@ void NeuralNetwork::exports(const ml::train::ExportMethods &method,
 std::vector<nntrainer::Tensor *> NeuralNetwork::getParameterPointers() {
   std::vector<nntrainer::Tensor *> params;
   /**
-   * @note This deliberately does not filter on LayerNode::getTrainable().
-   * For a gradient-free optimizer the graph is finalized with the trainable
-   * flag forced off (see NetworkGraph::setSkipGradients) so that no gradient
-   * tensors are allocated; that flag therefore no longer indicates which
-   * weights should be optimized. Every weight in the graph is perturbed.
+   * @note Frozen layers are skipped, and each weight appears at most once.
+   *
+   * setSkipGradients() does not make getTrainable() meaningless: finalizeContext
+   * copies the flag into a local before forcing it false for the gradient-free
+   * path, so LayerNode::getTrainable() still reports what the user asked for.
+   * Honouring it is what keeps `lora_rank > 0` meaningful under MeZO -- without
+   * this filter the frozen base model would be perturbed and updated too.
+   *
+   * The de-duplication matters for tied weights (tie_word_embedding appears in
+   * both embedding and lm-head mode): the same tensor would otherwise be
+   * visited twice per step and receive two independent draws of z, silently
+   * doubling the perturbation variance on the largest tensor in the model.
    */
+  std::unordered_set<nntrainer::Tensor *> seen;
   forEachLayer(
     [&](ml::train::Layer &layer, RunLayerContext &rc, void *user_data) {
       LayerNode &ln = static_cast<LayerNode &>(layer);
+      if (!ln.getTrainable())
+        return;
       for (unsigned int i = 0; i < ln.getNumWeights(); ++i) {
-        params.push_back(&ln.getWeight(i));
+        nntrainer::Tensor *w = &ln.getWeight(i);
+        if (seen.insert(w).second)
+          params.push_back(w);
       }
     },
     nullptr);

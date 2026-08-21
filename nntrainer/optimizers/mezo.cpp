@@ -13,16 +13,41 @@
 #include <mezo.h>
 #include <node_exporter.h>
 #include <random>
+#include <stdexcept>
 #include <util_func.h>
 
 namespace nntrainer {
 
-MeZO::MeZO() : mezo_props(MeZOEpsilon(), MeZOLearningRate()) {
+MeZO::MeZO() :
+  mezo_props(MeZOEpsilon(), MeZOLearningRate(), MeZOLearningRateDecay(),
+             MeZOMinLearningRate()) {
 
-  auto &[epsilon, learningRate] = mezo_props;
+  auto &[epsilon, learningRate, lrDecay, minLearningRate] = mezo_props;
   epsilon.set(0.01f);
   learningRate.set(0.0001f);
+  /** 1.0 keeps the rate fixed, i.e. the pre-decay behaviour */
+  lrDecay.set(1.0f);
+  minLearningRate.set(0.0f);
 }
+
+namespace {
+/**
+ * @brief Reject any weight MeZO cannot perturb correctly.
+ * @details Both weight loops below reach for a raw float* via getData<float>()
+ * and walk getDataLen() elements. Tensor::getData<T>() is an unchecked cast, so
+ * on a half-precision or quantized weight that pointer reinterprets the buffer
+ * and the loop runs past its end -- silent weight corruption plus a heap
+ * overflow. FP32 is the only layout this arithmetic is valid for, so say so
+ * loudly rather than corrupting memory. Reachable today via
+ * model_tensor_type=FP16-FP16 / fc_layer_dtype=FP16 in nntr_config.json.
+ */
+void assertPerturbableFP32(const nntrainer::Tensor *t) {
+  if (t->getDataType() != ml::train::TensorDim::DataType::FP32)
+    throw std::invalid_argument(
+      "[MeZO] only FP32 weights can be perturbed; got a non-FP32 tensor. "
+      "Load the model with model_tensor_type=FP32-FP32.");
+}
+} // namespace
 
 void MeZO::perturbParameters(std::vector<Tensor *> &params, float epsilon,
                              int seed) {
@@ -39,6 +64,7 @@ void MeZO::perturbParameters(std::vector<Tensor *> &params, float epsilon,
    * bit-identical to the one used by the other perturbations of this step.
    */
   for (auto *ptr : params) {
+    assertPerturbableFP32(ptr);
     float *data = ptr->getData<float>();
     size_t param_size = ptr->getDim().getDataLen();
     for (size_t i = 0; i < param_size; ++i) {
@@ -57,7 +83,6 @@ float MeZO::trainStep(std::function<void()> forward_fn,
   int seed = distrib(gen);
 
   float mezo_epsilon = getEpsilon();
-  float lr = getLearningRate();
 
   // Perturb parameters with +epsilon
   perturbParameters(params, mezo_epsilon, seed);
@@ -79,6 +104,7 @@ float MeZO::trainStep(std::function<void()> forward_fn,
   float projected_grad = (loss_plus - loss_minus) / (2.0f * mezo_epsilon);
 
   updateWeightsMeZO(params, seed, projected_grad);
+  ++step_count;
 
   /**
    * Report the midpoint of the two probe losses rather than whatever the last
@@ -107,11 +133,12 @@ void MeZO::updateWeightsMeZO(std::vector<nntrainer::Tensor *> &weights,
   std::mt19937 gen(seed);
   std::normal_distribution<float> normal_dist(0.0f, 1.0f);
 
-  float lr = getLearningRate();
+  const float lr = getEffectiveLearningRate();
   const float scale = -lr * projected_grad;
 
   /** @note in-place for the same reason as perturbParameters() */
   for (auto *ptr : weights) {
+    assertPerturbableFP32(ptr);
     float *data = ptr->getData<float>();
     size_t param_size = ptr->getDim().getDataLen();
     for (size_t i = 0; i < param_size; ++i) {
