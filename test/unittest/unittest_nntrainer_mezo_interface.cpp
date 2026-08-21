@@ -17,6 +17,7 @@
  * @brief       Unit test for MeZO optimizer interface changes.
  * @see         https://github.com/nntrainer/nntrainer
  * @author      Sachin Singh <sachin.3@samsung.com>
+ * @author      Niket Agarwal <niket.a@samsung.com>
  * @bug         No known bugs
  */
 #include <gtest/gtest.h>
@@ -188,9 +189,54 @@ TEST(nntrainer_mezo_interface, trainStep_reduces_linear_loss_p) {
 
   mezo.trainStep(noop_forward_fn, linear_loss_fn, params);
 
-  // Equality would only happen if the drawn z[0] was exactly 0, which has
-  // probability 0 under a continuous normal distribution.
-  EXPECT_LT(p0.getValue(0, 0, 0, 0), theta0_before);
+  /**
+   * The update is theta0 - lr*z0^2, strictly downhill for any nonzero z0. It
+   * is not strictly *representable* as a decrease, though: theta0 is 1.0f
+   * (ulp ~1.19e-7) and lr is 0.1, so a draw with |z0| < ~7.7e-4 rounds the
+   * update away entirely. That happens for roughly 1 run in 1600, which is
+   * often enough to flake in CI, so assert the direction rather than a strict
+   * inequality. The seed is drawn from std::random_device inside trainStep
+   * and cannot be pinned from here.
+   */
+  EXPECT_LE(p0.getValue(0, 0, 0, 0), theta0_before);
+}
+
+/**
+ * @brief MeZO_lr_decay shrinks the step over successive updates.
+ * @details A fixed rate large enough to make early progress is too coarse to
+ * converge finely later; the decay is what lets one run do both. Driving the
+ * same exactly-linear loss as above, the k-th update is -lr*decay^k*z_k^2, so
+ * with the RNG averaged over many steps the later moves are strictly smaller.
+ */
+TEST(nntrainer_mezo_interface, lr_decay_shrinks_updates_p) {
+  auto total_move = [](float decay, int steps) {
+    MeZO mezo;
+    mezo.setProperty({"MeZO_learning_rate=0.1", "MeZO_epsilon=0.01",
+                      "MeZO_lr_decay=" + std::to_string(decay)});
+    Tensor p = makeParamTensor(1.0f, -2.0f, 0.5f);
+    std::vector<Tensor *> params = {&p};
+    auto fwd = []() {};
+    auto loss = [&params]() { return params[0]->getValue(0, 0, 0, 0); };
+    for (int i = 0; i < steps; ++i)
+      mezo.trainStep(fwd, loss, params);
+    return 1.0f - p.getValue(0, 0, 0, 0); // total distance descended
+  };
+
+  // Same seedless RNG both times, but 200 steps average out the draws well
+  // enough that a 0.9 decay must move materially less than no decay at all.
+  const float undecayed = total_move(1.0f, 200);
+  const float decayed = total_move(0.9f, 200);
+  EXPECT_GT(undecayed, 0.0f);
+  EXPECT_LT(decayed, undecayed);
+}
+
+/**
+ * @brief A decay of 1.0 (the default) must reproduce the fixed-rate behaviour.
+ */
+TEST(nntrainer_mezo_interface, lr_decay_default_is_off_p) {
+  MeZO mezo;
+  mezo.setProperty({"MeZO_learning_rate=0.1", "MeZO_epsilon=0.01"});
+  EXPECT_FLOAT_EQ(mezo.getEffectiveLearningRate(), mezo.getLearningRate());
 }
 
 /**

@@ -6,6 +6,7 @@
  * @date   07 August 2026
  * @brief  CLI driver for full-parameter MeZO (zeroth-order, backprop-free)
  *         fine-tuning of a Qwen3 CausalLM model.
+ * @author Niket Agarwal <niket.a@samsung.com>
  * @bug    No known bugs except for NYI items
  *
  * @details Unlike train_qwen3_lora.cpp, this driver never enables LoRA
@@ -27,6 +28,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <string>
 
@@ -38,7 +40,20 @@ void printUsage(const char *prog) {
     << " <model_dir> <train_data.txt> <valid_data.txt> [options]\n"
     << "\nOptions:\n"
     << "  --MeZO_lr <float>      MeZO learning rate (default 1e-4)\n"
-    << "  --MeZO_epsilon <float> MeZO perturbation magnitude (default 1e-2)\n"
+    << "  --MeZO_epsilon <float> MeZO perturbation magnitude (default 1e-2).\n"
+    << "                         Must be small enough that the two probes sit\n"
+    << "                         in the local-quadratic regime; if the probe\n"
+    << "                         mean is far above the unperturbed loss, the\n"
+    << "                         gradient estimate is mostly bias and no\n"
+    << "                         learning rate will converge. 1e-4 measured\n"
+    << "                         well for Qwen3-0.6B; 1e-2 did not.\n"
+    << "  --MeZO_lr_decay <f>    per-update multiplicative decay on the\n"
+    << "                         learning rate (default 1.0 = off). A rate\n"
+    << "                         big enough to make early progress is too\n"
+    << "                         coarse to converge finely later, so a fixed\n"
+    << "                         rate descends and then random-walks on a\n"
+    << "                         floor. e.g. 0.995 halves it every ~139 steps.\n"
+    << "  --MeZO_min_lr <float>  floor for the decayed rate (default 0)\n"
     << "  --epochs <int>         number of epochs (default 1)\n"
     << "  --output <path>        full checkpoint output path\n"
     << "                         (default <model_dir>/mezo_checkpoint.bin)\n"
@@ -55,11 +70,36 @@ void printUsage(const char *prog) {
     << "                         training state and this resumes exactly.\n"
     << "  --start_epoch <int>    epoch number to count from when resuming;\n"
     << "                         affects logging only (default 0)\n"
+    << "  --label_tokens <ids>   comma-separated token ids the answer must be\n"
+    << "                         one of, e.g. 16,17,18,19,20 for \"1\"..\"5\".\n"
+    << "                         Restricts training to a choice among these\n"
+    << "                         instead of a softmax over the whole ~152k\n"
+    << "                         vocabulary, which is what the MeZO paper does\n"
+    << "                         for classification. Ids must be contiguous.\n"
+    << "                         Overrides nntr_config.json's label_token_ids.\n"
+    << "  --no_save_best         do not write the best-so-far checkpoint.\n"
+    << "                         That checkpoint is written every time valid\n"
+    << "                         loss improves, which on a well-converging\n"
+    << "                         run is nearly every epoch -- ~2.4GB each for\n"
+    << "                         Qwen3-0.6B. On a memory-constrained machine\n"
+    << "                         that I/O can outweigh the training itself.\n"
+    << "                         Use for hyperparameter sweeps, where only\n"
+    << "                         the loss curve matters.\n"
+    << "  --batch_size <int>     samples averaged into each MeZO step\n"
+    << "                         (default: nntr_config.json's batch_size).\n"
+    << "                         MeZO's gradient estimate has variance that\n"
+    << "                         grows with parameter count, and averaging\n"
+    << "                         over a batch is the main lever against it --\n"
+    << "                         the MeZO paper uses 64, and the MNIST demo\n"
+    << "                         in Applications/MeZO uses 32. At batch 1 the\n"
+    << "                         estimate is too noisy to converge on a model\n"
+    << "                         this size.\n"
     << "  --save_every <int>     epochs between rolling checkpoint writes\n"
     << "                         (default 1). A full checkpoint is ~2.4GB for\n"
     << "                         Qwen3-0.6B, so raise this if epochs are\n"
     << "                         short enough that saving dominates. The\n"
-    << "                         best-so-far checkpoint is always written.\n"
+    << "                         best-so-far checkpoint is written too,\n"
+    << "                         unless --no_save_best.\n"
     << "\n"
     << "This driver always fine-tunes every parameter (lora_rank is forced\n"
     << "to 0 regardless of nntr_config.json) using the MeZO optimizer, which\n"
@@ -75,6 +115,7 @@ struct EpochState {
   unsigned int epoch = 0;   /**< counts from the resumed-at epoch, not from 0 */
   unsigned int save_every = 1; /**< epochs between "latest" checkpoint writes */
   float best_loss = std::numeric_limits<float>::max();
+  bool no_save_best = false;  /**< skip best-checkpoint writes entirely */
 };
 
 /**
@@ -128,6 +169,8 @@ void onEpochComplete(void *user_data) {
 
   if (valid_stats.loss < st->best_loss) {
     st->best_loss = valid_stats.loss;
+    if (st->no_save_best)
+      return;
     try {
       saveCheckpointAtomically(st->model, st->output_path);
       std::cout << "  new best -> " << st->output_path << std::endl;
@@ -160,6 +203,11 @@ int main(int argc, char *argv[]) {
   std::string resume_path;
   unsigned int start_epoch = 0;
   unsigned int save_every = 1;
+  unsigned int batch_size_override = 0;
+  bool no_save_best = false;
+  float mezo_lr_decay = 1.0f;
+  float mezo_min_lr = 0.0f;
+  std::vector<unsigned int> label_tokens;
 
   for (int i = 4; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -174,10 +222,19 @@ int main(int argc, char *argv[]) {
         mezo_lr = std::stof(next("--MeZO_lr"));
       else if (arg == "--MeZO_epsilon")
         mezo_epsilon = std::stof(next("--MeZO_epsilon"));
+      else if (arg == "--MeZO_lr_decay")
+        mezo_lr_decay = std::stof(next("--MeZO_lr_decay"));
+      else if (arg == "--MeZO_min_lr")
+        mezo_min_lr = std::stof(next("--MeZO_min_lr"));
       else if (arg == "--epochs")
         epochs = static_cast<unsigned int>(std::stoul(next("--epochs")));
       else if (arg == "--output")
         output_path = next("--output");
+      else if (arg == "--no_save_best")
+        no_save_best = true;
+      else if (arg == "--batch_size")
+        batch_size_override =
+          static_cast<unsigned int>(std::stoul(next("--batch_size")));
       else if (arg == "--max_samples")
         max_samples =
           static_cast<unsigned int>(std::stoul(next("--max_samples")));
@@ -191,7 +248,14 @@ int main(int argc, char *argv[]) {
       else if (arg == "--start_epoch")
         start_epoch =
           static_cast<unsigned int>(std::stoul(next("--start_epoch")));
-      else if (arg == "--save_every")
+      else if (arg == "--label_tokens") {
+        std::stringstream ss(next("--label_tokens"));
+        std::string tok;
+        while (std::getline(ss, tok, ','))
+          if (!tok.empty())
+            label_tokens.push_back(
+              static_cast<unsigned int>(std::stoul(tok)));
+      } else if (arg == "--save_every")
         save_every =
           static_cast<unsigned int>(std::stoul(next("--save_every")));
       else {
@@ -238,6 +302,17 @@ int main(int argc, char *argv[]) {
     // Transformer::hasLoRA()) and MeZO perturbs the whole model.
     nntr_cfg["lora_rank"] = 0;
 
+    /**
+     * Batch size is the primary control on MeZO's estimator variance, so it is
+     * worth overriding from the command line rather than only from the model's
+     * config file.
+     */
+    if (batch_size_override)
+      nntr_cfg["batch_size"] = batch_size_override;
+
+    if (!label_tokens.empty())
+      nntr_cfg["label_token_ids"] = label_tokens;
+
     if (seq_len_override) {
       nntr_cfg["init_seq_len"] = seq_len_override;
       // max_seq_len must not sit below the training length; mha_core derives
@@ -255,6 +330,7 @@ int main(int argc, char *argv[]) {
               << "seq_len:      " << seq_len << "\n"
               << "MeZO_lr:      " << mezo_lr << "\n"
               << "MeZO_epsilon: " << mezo_epsilon << "\n"
+              << "MeZO_lr_decay: " << mezo_lr_decay << "\n"
               << "epochs:       " << epochs << "\n"
               << "output:       " << output_path << std::endl;
 
@@ -262,7 +338,9 @@ int main(int argc, char *argv[]) {
     model.initializeForTraining(
       mezo_lr, epochs, "MeZO",
       {nntrainer::withKey("MeZO_learning_rate", mezo_lr),
-       nntrainer::withKey("MeZO_epsilon", mezo_epsilon)});
+       nntrainer::withKey("MeZO_epsilon", mezo_epsilon),
+       nntrainer::withKey("MeZO_lr_decay", mezo_lr_decay),
+       nntrainer::withKey("MeZO_min_learning_rate", mezo_min_lr)});
 
     // A MeZO checkpoint is a plain full-weight file in the same format as the
     // base checkpoint, so resuming is just loading that instead. Nothing else
@@ -289,11 +367,21 @@ int main(int argc, char *argv[]) {
       throw std::runtime_error(
         "model has no tokenizer; a tokenizer_file is required for training");
 
-    causallm::TrainingDataGenerator train_gen(
-      train_data_path, tokenizer, seq_len, vocab_size, max_samples, seed);
-    causallm::TrainingDataGenerator valid_gen(
-      valid_data_path, tokenizer, seq_len, vocab_size, /*max_samples=*/0,
-      seed);
+    // The graph's head is sliced to these, so labels must be the same width.
+    const std::vector<int32_t> label_ids(model.getLabelTokenIds().begin(),
+                                         model.getLabelTokenIds().end());
+    if (!label_ids.empty())
+      std::cout << "label tokens: " << label_ids.size()
+                << " (objective is a " << label_ids.size()
+                << "-way choice, not " << vocab_size << "-way)" << std::endl;
+
+    causallm::TrainingDataGenerator train_gen(train_data_path, tokenizer,
+                                              seq_len, vocab_size, max_samples,
+                                              seed, label_ids);
+    causallm::TrainingDataGenerator valid_gen(valid_data_path, tokenizer,
+                                              seq_len, vocab_size,
+                                              /*max_samples=*/0, seed,
+                                              label_ids);
     std::cout << "train_samples: " << train_gen.size() << "\n"
               << "valid_samples: " << valid_gen.size() << std::endl;
 
@@ -318,8 +406,9 @@ int main(int argc, char *argv[]) {
     std::cout << "latest ckpt:  " << latest_path << "\n"
               << "history:      " << csv_path << std::endl;
 
-    EpochState state{&model,     output_path, latest_path,
-                     csv_path,   start_epoch, save_every};
+    EpochState state{&model,   output_path, latest_path,
+                     csv_path, start_epoch,  save_every,
+                     std::numeric_limits<float>::max(), no_save_best};
     model.train(onEpochComplete, &state);
 
     std::cout << "training complete; best valid_loss=" << state.best_loss
