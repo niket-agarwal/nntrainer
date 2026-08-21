@@ -252,6 +252,15 @@ public:
   unsigned int getVocabSize() const { return NUM_VOCAB; }
 
   /**
+   * @brief Answer tokens the training head is restricted to, or empty for a
+   *        full-vocabulary objective. The data generator must build labels of
+   *        matching width - see TrainingDataGenerator's label_token_ids.
+   */
+  const std::vector<unsigned int> &getLabelTokenIds() const {
+    return LABEL_TOKEN_IDS;
+  }
+
+  /**
    * @brief Get tokenizer owned by this model, or nullptr if no tokenizer exists
    */
   tokenizers::Tokenizer *getTokenizer() { return tokenizer.get(); }
@@ -531,6 +540,15 @@ protected:
   unsigned int LORA_RANK = 0;
   unsigned int LORA_ALPHA = 0;
   std::vector<std::string> LORA_TARGET;
+
+  /** Closed set of answer token ids, from nntr_cfg's "label_token_ids".
+   *  Empty (default) trains against a one-hot over the whole vocabulary.
+   *  When set, initializeForTraining() slices the head down to these tokens
+   *  so the objective is a k-way choice among them - the label-word setup
+   *  used for classification tasks. Ids must be contiguous and ascending;
+   *  the training data's answer tokens must all fall inside the set. Affects
+   *  the training graph only, never inference. */
+  std::vector<unsigned int> LABEL_TOKEN_IDS;
 
   /** Optional gradient clipping for the LoRA weights, from nntr_cfg's
    *  "lora_clip_grad_by_norm". 0 (default) disables it. When set, every
