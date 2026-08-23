@@ -9,10 +9,12 @@
  * @author Niket Agarwal <niket.a@samsung.com>
  * @bug    No known bugs except for NYI items
  *
- * @details Unlike train_qwen3_lora.cpp, this driver never enables LoRA
- *          (lora_rank is forced to 0 regardless of nntr_config.json), so
- *          every layer stays at nntrainer's default trainable=true and the
- *          MeZO optimizer perturbs/updates the full ~0.6B parameter set —
+ * @details Trains with MeZO, which estimates the gradient from two forward
+ *          passes and never calls backwarding(). Defaults to full-parameter
+ *          tuning (lora_rank 0): every layer stays at nntrainer's default
+ *          trainable=true and MeZO perturbs the whole ~0.6B parameter set.
+ *          Passing --lora_rank freezes the base model and perturbs only the
+ *          adapters, which shrinks the space MeZO has to search —
  *          see NeuralNetwork::getParameterPointers() and the
  *          !opt->requiresBackprop() branch in NeuralNetwork::train_run().
  */
@@ -47,6 +49,16 @@ void printUsage(const char *prog) {
     << "                         gradient estimate is mostly bias and no\n"
     << "                         learning rate will converge. 1e-4 measured\n"
     << "                         well for Qwen3-0.6B; 1e-2 did not.\n"
+    << "  --lora_rank <int>      perturb LoRA adapters instead of every\n"
+    << "                         weight (default 0 = full parameter).\n"
+    << "                         MeZO estimates a gradient in d dimensions\n"
+    << "                         from one scalar per step, so its convergence\n"
+    << "                         rate degrades with d. Rank 8 on Qwen3-0.6B is\n"
+    << "                         ~1.8M perturbed parameters against 596M full\n"
+    << "                         parameter -- a ~330x smaller search space,\n"
+    << "                         which is why the MeZO paper pairs it with\n"
+    << "                         parameter-efficient tuning.\n"
+    << "  --lora_alpha <int>     LoRA alpha (default: 2x rank)\n"
     << "  --MeZO_lr_decay <f>    per-update multiplicative decay on the\n"
     << "                         learning rate (default 1.0 = off). A rate\n"
     << "                         big enough to make early progress is too\n"
@@ -101,9 +113,9 @@ void printUsage(const char *prog) {
     << "                         best-so-far checkpoint is written too,\n"
     << "                         unless --no_save_best.\n"
     << "\n"
-    << "This driver always fine-tunes every parameter (lora_rank is forced\n"
-    << "to 0 regardless of nntr_config.json) using the MeZO optimizer, which\n"
-    << "never computes a gradient via backpropagation.\n";
+    << "Trains with the MeZO optimizer, which never computes a gradient via\n"
+    << "backpropagation. Full-parameter by default; --lora_rank restricts the\n"
+    << "perturbation to LoRA adapters.\n";
 }
 
 /** @brief Per-epoch bookkeeping shared with the training callback. */
@@ -207,6 +219,8 @@ int main(int argc, char *argv[]) {
   bool no_save_best = false;
   float mezo_lr_decay = 1.0f;
   float mezo_min_lr = 0.0f;
+  unsigned int lora_rank = 0;
+  unsigned int lora_alpha = 0;
   std::vector<unsigned int> label_tokens;
 
   for (int i = 4; i < argc; ++i) {
@@ -222,6 +236,10 @@ int main(int argc, char *argv[]) {
         mezo_lr = std::stof(next("--MeZO_lr"));
       else if (arg == "--MeZO_epsilon")
         mezo_epsilon = std::stof(next("--MeZO_epsilon"));
+      else if (arg == "--lora_rank")
+        lora_rank = static_cast<unsigned int>(std::stoul(next("--lora_rank")));
+      else if (arg == "--lora_alpha")
+        lora_alpha = static_cast<unsigned int>(std::stoul(next("--lora_alpha")));
       else if (arg == "--MeZO_lr_decay")
         mezo_lr_decay = std::stof(next("--MeZO_lr_decay"));
       else if (arg == "--MeZO_min_lr")
@@ -297,10 +315,19 @@ int main(int argc, char *argv[]) {
       nntr_cfg["tokenizer_file"] = tok.string();
     }
 
-    // This driver is full-parameter only: force LoRA off regardless of what
-    // nntr_config.json says, so every layer stays trainable (see
-    // Transformer::hasLoRA()) and MeZO perturbs the whole model.
-    nntr_cfg["lora_rank"] = 0;
+    /**
+     * lora_rank 0 (the default) keeps every layer trainable and MeZO perturbs
+     * the whole model. A nonzero rank freezes the base model via
+     * Transformer::hasLoRA() and leaves only the adapters trainable, so
+     * NeuralNetwork::getParameterPointers() -- which honours
+     * LayerNode::getTrainable() -- hands MeZO the adapters alone.
+     */
+    nntr_cfg["lora_rank"] = lora_rank;
+    if (lora_rank > 0) {
+      nntr_cfg["lora_alpha"] = lora_alpha ? lora_alpha : 2 * lora_rank;
+      if (nntr_cfg["lora_target"].empty())
+        nntr_cfg["lora_target"] = {"query", "key", "value", "output"};
+    }
 
     /**
      * Batch size is the primary control on MeZO's estimator variance, so it is
@@ -354,13 +381,21 @@ int main(int argc, char *argv[]) {
         throw std::runtime_error("resume checkpoint not found: " + resume_path);
       std::cout << "resuming from:  " << resume_path << std::endl;
     }
-    // lora_rank is forced to 0 above, so the compiled graph contains no
-    // loraA/loraB tensors and the ordinary positional loader lines up with
-    // the checkpoint exactly. Deliberately NOT load_weight_lora(): that path
-    // builds a throwaway LoRA-free copy of the whole model to load into and
-    // then copies across by name, which transiently doubles resident weight
-    // memory (~2.4GB extra for Qwen3-0.6B FP32) for no benefit here.
-    model.load_weight(weight_file);
+    /**
+     * With lora_rank 0 the compiled graph holds no loraA/loraB tensors, so the
+     * ordinary positional loader lines up with the checkpoint exactly. That
+     * path is preferred when it applies: load_weight_lora() builds a throwaway
+     * LoRA-free copy of the whole model to load into and then copies across by
+     * name, transiently doubling resident weight memory (~2.4GB extra for
+     * Qwen3-0.6B FP32).
+     *
+     * With adapters present the positional loader would misalign, so the
+     * by-name path is required.
+     */
+    if (lora_rank > 0)
+      model.load_weight_lora(weight_file, resume_path);
+    else
+      model.load_weight(weight_file);
 
     auto *tokenizer = model.getTokenizer();
     if (tokenizer == nullptr)
