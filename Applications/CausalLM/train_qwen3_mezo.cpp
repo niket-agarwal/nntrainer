@@ -28,6 +28,7 @@
 #include <util_func.h>
 
 #include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -326,7 +327,25 @@ int main(int argc, char *argv[]) {
     if (lora_rank > 0) {
       nntr_cfg["lora_alpha"] = lora_alpha ? lora_alpha : 2 * lora_rank;
       if (nntr_cfg["lora_target"].empty())
-        nntr_cfg["lora_target"] = {"query", "key", "value", "output"};
+        nntr_cfg["lora_target"] = {"wq", "wk", "wv", "wo"};
+
+      /**
+       * Transformer::hasLoRA() matches these names exactly, and a module that
+       * does not match is frozen outright when lora_rank > 0. An unrecognised
+       * target therefore freezes the entire model rather than erroring: MeZO
+       * is handed an empty parameter list, perturbs nothing, and every epoch
+       * reports a bit-identical loss. Fail loudly instead.
+       */
+      static const std::vector<std::string> kValidTargets = {
+        "wq", "wk", "wv", "wo", "ffn_up", "ffn_gate", "ffn_down"};
+      for (const auto &t : nntr_cfg["lora_target"]) {
+        const std::string name = t.get<std::string>();
+        if (std::find(kValidTargets.begin(), kValidTargets.end(), name) ==
+            kValidTargets.end())
+          throw std::invalid_argument(
+            "unknown lora_target \"" + name +
+            "\"; valid targets are wq, wk, wv, wo, ffn_up, ffn_gate, ffn_down");
+      }
     }
 
     /**
